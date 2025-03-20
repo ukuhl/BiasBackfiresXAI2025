@@ -18,5 +18,9 @@ When Bias Backfires: The Modulatory Role of Counterfactual Explanations on the A
 
 ```
 @inproceedings{
+  title={When Bias Backfires: The Modulatory Role of Counterfactual Explanations on the Adoption of Algorithmic Bias in XAI-Supported Human Decision-Making},
+  author={Kuhl, Ulrike and Bush, Annika},
+  year={2025},
+  pubstate={submitted}
 }
 ```
