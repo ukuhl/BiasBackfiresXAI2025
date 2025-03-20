@@ -71,7 +71,70 @@ Fields:
 - ai_ethnicity: (String) Ethnicity of the AI-recommended candidate.
 - ai_image: (String) Filename for the AI-recommended candidate's headshot image.
 
+#### user_response_details_incomplete.csv
+Description:
+This file contains the records of participants who did not complete the study, i.e., those who aborted early. It includes the partial responses captured up to the point of dropout. 
+
+Fields: same as user_response_details.csv
+
+#### user_phase_confidence_view.csv
+Description:
+
+This CSV file contains self-reported confidence ratings from participants, collected at various phases of the study. Each record corresponds to a specific study phase for a given session. In analysis, the first 5 digits of the session_id are used as the userID.
+
+Fields:
+
+- session_id: (String) Unique session identifier (first 5 digits are used as the userID).
+- phase_number: (Integer) The numerical order of the study phase (e.g., 3 for Pre phase, 4 for Intervention Phase, 5 for Post Phase).
+- phase_name: (String) Descriptive label for the study phase (e.g., "Pre phase", "Intervention Phase", "Post Phase").
+- confidence: (Numeric) The participant's self-reported confidence score during that phase (1 - not at all, 5 - extremely)
+
+#### user_attention_questions.csv
+Description:
+
+This file records participants' responses to attention-check questions (or rather, comprehension check) designed to ensure participants fully understood and paid attention to the study instructions.
+
+Fields:
+
+- session_id: (String) A unique identifier for the survey session. (Note: The first 5 digits can be used as the userID in analyses.)
+- question: (String) The identifier for the attention-check question (e.g., "question1", "question2", etc.).
+  - question1, correct answer: "Resource Operations Coordinator"
+  - question2, correct answer: "Prior Experience, Education, References, Soft Skills"
+  - question3, correct answer: "The candidate‘s „Experience“ has a lower value than the candidate‘s „Soft Skills“., The candidate‘s „References“ have received the maximal score of 10."
+- response: (String) The participant’s response to the attention-check question.
+
+#### session_info_demographics.csv
+Description:
+
+This CSV file contains session-level information and demographic data for study participants. It includes details about each session’s timing, the participant's age group and gender, and an indicator for whether the participant was blocked from the study due to failed comprehension checks.
+
+Fields:
+
+- session_id: (String) A unique identifier for the session.
+- status: (Integer) Indicates the session status (e.g., 0 = no issues or 1 = incomplete data).
+- start_time: (Datetime/String) The timestamp when the session began.
+- end_time: (Datetime/String) The timestamp when the session ended.
+- age_group: (String) Categorical age group of the participant (e.g., "18-24y", "25-34y", etc.).
+- gender: (String) Self-identified gender of the participant (e.g., male, female, etc.).
+- blocked: (Boolean) Indicator of whether the participant was blocked from the study due to failed comprehension checks (e.g., 1 for blocked, empty or 0 for not blocked).
+
 ### Directory ExperimentalData
+
+#### xHR_CandidateData.csv
+Description:
+
+This file contains fully simulated candidate data used to present potential job seekers to participants in the study. The data simulates candidate profiles with demographic and qualification scores, supporting realistic hiring scenarios.
+
+Fields:
+
+- gender: (String) Candidate's gender (e.g., "F" for female, "M" for male).
+- ethnicity: (String) Candidate's ethnicity (e.g., "Af" for African).
+- glasses: (String/Integer) Indicator for whether the candidate is depicted wearing glasses ("1" indicates the presence of glasses).
+- prior.exp: (Numeric) Score representing the candidate's prior work experience.
+- education: (Numeric) Score representing the candidate's education level.
+- references: (Numeric) Score representing the quality of the candidate's references.
+- soft.skills: (Numeric) Score representing the candidate's soft skills.
+- summed.points: (Numeric) Total score calculated by summing the scores for prior experience, education, references, and soft skills.
 
 ## License
 
