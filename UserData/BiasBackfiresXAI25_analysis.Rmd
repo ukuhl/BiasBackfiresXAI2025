@@ -1,0 +1,1371 @@
+---
+title: "Evaluation of User Data acquired in `When Bias Backfires' (Kuhl & Bush, 2025)"
+output: 
+  pdf_document:
+    toc: TRUE
+    toc_depth: 5
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r results='asis', echo=FALSE, include=FALSE,}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+
+library(ggplot2)
+library(ggpattern)
+library(smplot2)
+
+#library(ggrepel)
+library(plyr)
+
+#install.packages("dplyr")
+library(dplyr)
+
+## Suppress summarise info
+options(dplyr.summarise.inform = FALSE)
+
+# for defining a new colour palette
+# install.packages("unikn")
+library(unikn)
+
+# for locating the script
+#install.packages("rstudioapi")
+library(rstudioapi)
+
+# for transorming data from long format to wide
+#install.packages("tidyr")
+library(tidyr)
+
+# using nice, colourblind-safe shades:
+#install.packages("khroma")
+library(khroma)
+
+#install.packages("data.table")
+library(data.table)
+#library(tidyverse)
+#library(scales)
+
+# to compute effect sizes:
+#install.packages("effectsize")
+library(effectsize)
+
+# to treat timing data well:
+#install.packages("hms")
+library(hms)
+
+## for the lme approach:
+#install.packages("emmeans")
+library(emmeans)
+#library("sjstats")
+#library("lme4")
+
+#install.packages("lmerTest")
+library(lmerTest)
+
+# turn off scientific notation for exact values
+options(scipen = 999)
+
+# Barrier-free color palette - we borrow colors from Paul Tom's muted palette
+# https://cran.r-project.org/web/packages/khroma/vignettes/tol.html
+# Create a custom color scale
+mutedColors <- c("#88CCEE","#332288","#44aa99","#117733")
+names(mutedColors) <- c("FB-AI","FB-XAI","MB-AI","MB-XAI")
+colScale_muted_colour <- scale_colour_manual(name = "cond",values = mutedColors)
+colScale_muted_fill <- scale_fill_manual(name = "cond",values = mutedColors)
+
+## set an empty string to save all statistical information for a summary file:
+matchingRes=""
+matchingRes="Comparison,ShapiroPval,TestUsed,TestPval,TestEffSize"
+
+## helpful helper function to summarize data:
+data_summary <- function(data, varname, groupnames){
+  #library(dplyr)
+  summary_func <- function(x, col){
+    c(mean = mean(x[[col]], na.rm=TRUE),
+      sd = sd(x[[col]], na.rm=TRUE),
+      sem = sd(x[[col]], na.rm=TRUE)/sqrt(length(x[[col]])))
+  }
+  data_sum<-ddply(data, groupnames, .fun=summary_func,
+                  varname)
+  return(data_sum)
+}
+
+```
+
+\newpage
+
+# Introduction
+
+This is an analysis of data acquired in the "When Bias Backfires" study (Kuhl & Bush, 2025) run on Prolific in January 2025.
+
+In this study, our aim is to explore how people make decisions when interacting with biased AI systems. Specifically, aimed to contribute three key insights to the XAI community:
+
+1. Understanding of how AI bias can impact human decision-making through repeated interaction.
+2. Examining XAI’s role in either facilitating or preventing bias transmission.
+3. Highlighting implications for AI systems that support human decision-making while protecting against bias adoption.
+
+In this study, naive users were asked to take on the role of a hiring manager and had to compare candidates for a position in a newly founded department in different phases:
+
+In phase 1 (baseline assessment), participants establish their baseline decision- making patterns by reviewing 20 pairs of candidate profiles without (X)AI as- sistance. For each pair, participants are asked to make a hiring decision for one of the candidates based on the information presented. This phase serves as a crucial baseline measure of any pre-existing biases.
+
+Phase 2 – (X)AI interaction – introduces participants to an (X)AI recruit- ment assistant and represents the core experimental manipulation. Participants review 20 new pairs of candidates, this time with (X)AI recommendations. Par- ticipants in the AI condition receive only the AI’s recommendations, while those in the XAI condition receive the same recommendations supple- mented with a CE. In addition to the (X)AI manipulation, the recom- mendations participants encountered were systematically biased either against female or male candidates.
+
+In phase 3 (post-interaction decisions), participants return to making de- cisions without (X)AI assistance, reviewing another set of 20 candidate pairs. This phase is critical to measuring any persistent effects of (X)AI exposure on decision-making patterns.
+
+At the end of each of the decision phases 1-3, participants indicate their confidence in that decision on a 5-point Likert scale ranging from “Not at all confident” to “Extremely confident”.
+
+The experiment concludes with phase 4 (post-study assessment), where par- ticipants complete a brief questionnaire about their demographics (age and gen- der identity) and their trust in the (X)AI assistant. Additionally, they respond to two open-ended questions about if they noticed anything about the (X)AI tool and their understanding of the purpose of the study.
+
+# First things first: rough data cleaning
+
+Let's first just look at the data we have. Excluding all users that had e.g., incomplete datasets, what is the turnout? 
+
+```{r echo=FALSE, warning=FALSE}
+
+# Set working directory to source file location
+sourceLoc=getSourceEditorContext()$path
+setwd(dirname(sourceLoc))
+
+## Where's the data - Final Data After Follow-Up
+demo_source = list.files(pattern="session_info_demographics",full.names=TRUE)
+conf_source = list.files(pattern="user_phase_confidence_view",full.names=TRUE)
+resp_source = list.files(pattern="user_response_details.csv",full.names=TRUE)
+resp_incomp_source = list.files(pattern="user_response_details_incomplete.csv",full.names=TRUE)
+survey_source = list.files(pattern="user_survey_questions_view",full.names=TRUE)
+
+# load to dataframes
+df_demo = read.csv(demo_source,header=TRUE,sep = ",")
+df_conf = read.csv(conf_source,header=TRUE,sep = ",")
+df_resp = read.csv(resp_source,header=TRUE,sep = ",",colClasses=c(biased_gender="character"))
+df_resp_incomp = read.csv(resp_incomp_source,header=TRUE,sep = ",",colClasses=c(biased_gender="character"))
+df_survey = read.csv(survey_source,header=TRUE,sep = ",")
+
+# First of: identify users with full datasets in "user_response_details_incomplete.csv"
+# full datasets might have ended by there by timing out or similar circumstances
+# get number of trials per phase in db:
+trial_count_incomplete_per_phase = df_resp_incomp %>% 
+  group_by(session_id,phase_name) %>% 
+  summarise(count = n()) 
+# get number of phases per id in db
+phase_count_incomplete = df_resp_incomp %>% 
+  group_by(session_id,phase_name) %>% 
+  summarise(count = n()) %>% 
+  group_by(session_id) %>% 
+  summarise(count = n())
+
+# get ids of users with full task performance ended up in incomplete list:
+valid_ids_in_incomplete=phase_count_incomplete$session_id[phase_count_incomplete$count==3]
+
+# add valid users from incomplete list to response data:
+df_resp=rbind(df_resp,df_resp_incomp[df_resp_incomp$session_id %in% valid_ids_in_incomplete,])
+
+# add new column user_id (truncated session_id for better visualization)
+df_demo$user_id=substr(df_demo$session_id,1,5)
+df_conf$user_id=substr(df_conf$session_id,1,5)
+df_resp$user_id=substr(df_resp$session_id,1,5)
+df_survey$user_id=substr(df_survey$session_id,1,5)
+
+# generate a condition dataframe holding information on condition and user_id:
+df_cond=distinct(select(df_resp, c('user_id','xAI','biased_gender')))
+
+# keep only those user_ids that are in cond (i.e., uniquely in df_resp)
+valid_user_ids=df_cond$user_id
+userNo_raw=length(valid_user_ids)
+
+## from all dfs, retain only those lines belonging to final_valid_user_ids
+df_demo=subset(df_demo, user_id %in% valid_user_ids)
+df_conf=subset(df_conf, user_id %in% valid_user_ids)
+df_resp=subset(df_resp, user_id %in% valid_user_ids)
+df_survey=subset(df_survey, user_id %in% valid_user_ids)
+
+# add condition information to all dfs (makes life easier later on)
+df_demo=merge(x=df_demo,y=df_cond, by="user_id", all.x=TRUE)
+df_conf=merge(x=df_conf,y=df_cond, by="user_id", all.x=TRUE)
+df_survey=merge(x=df_survey,y=df_cond, by="user_id", all.x=TRUE)
+
+# turn into factor
+df_demo$cond=as.factor(paste(df_demo$biased_gender,df_demo$xAI,sep = ""))
+df_conf$cond=as.factor(paste(df_conf$biased_gender,df_conf$xAI,sep = ""))
+df_survey$cond=as.factor(paste(df_survey$biased_gender,df_survey$xAI,sep = ""))
+df_resp$cond=as.factor(paste(df_resp$biased_gender,df_resp$xAI,sep = ""))
+
+# re-name factors as seen in paper publication
+df_demo$cond=revalue(df_demo$cond, c("F0" = "FB-AI", "F1" = "FB-XAI","M0" = "MB-AI", "M1" = "MB-XAI"))
+df_conf$cond=revalue(df_conf$cond, c("F0" = "FB-AI", "F1" = "FB-XAI","M0" = "MB-AI", "M1" = "MB-XAI"))
+df_survey$cond=revalue(df_survey$cond, c("F0" = "FB-AI", "F1" = "FB-XAI","M0" = "MB-AI", "M1" = "MB-XAI"))
+df_resp$cond=revalue(df_resp$cond, c("F0" = "FB-AI", "F1" = "FB-XAI","M0" = "MB-AI", "M1" = "MB-XAI"))
+
+```
+
+## General infos after removal of incomplete datasets
+
+How many users entered the study and inserted their Prolific-ID (i.e., also including users with incomplete datasets or those failing the comprehension checks)? `r length(valid_user_ids)`
+
+After removal of incomplete datasets, we have `r length(unique(df_resp$user_id))` participants. Of those, 
+
+* `r length(unique(df_resp$user_id[df_resp$biased_gender=="F" & df_resp$xAI != 1]))` participants were in the FemBias-noEx condition
+
+* `r length(unique(df_resp$user_id[df_resp$biased_gender=="M" & df_resp$xAI != 1]))` participants were in the MalBias-noEx condition
+
+* `r length(unique(df_resp$user_id[df_resp$biased_gender=="F" & df_resp$xAI != 0]))` participants were in the FemBias-XAI condition
+
+* `r length(unique(df_resp$user_id[df_resp$biased_gender=="M" & df_resp$xAI != 0]))` participants were in the MalBias-XAI condition
+
+## Check covariates across groups
+
+Additionally to assessing performance, we also acquire age and gender information of participants.
+How do our groups look like? Are the groups comparable?
+
+```{r echo=FALSE, warning=FALSE,fig.height = 4, fig.width = 3.5}
+
+# get age / gender frequencies
+freq_count_age = df_demo %>% 
+  group_by(age_group, xAI, biased_gender, cond) %>% 
+  summarise(count = n(), .groups = 'drop') 
+
+freq_count_gender = df_demo %>% 
+  group_by(gender, xAI, biased_gender, cond) %>% 
+  summarise(count = n(), .groups = 'drop') 
+
+# plot age information per condition
+age_freq_plot=ggplot(freq_count_age,aes(x = age_group, y = count, fill=factor(biased_gender))) +
+  geom_col_pattern(
+    aes(pattern_fill = factor(xAI)), 
+    pattern = 'stripe',
+    fill    = 'white',
+    colour  = 'black'
+  ) + 
+  facet_grid(xAI ~ biased_gender) +
+  scale_y_continuous(sec.axis = sec_axis(~ . , name = "Explanation given to user?", breaks = NULL, labels = NULL)) +
+  theme_bw()
+
+# save plot
+ggsave("Figures/CovAgeRaw_distribution_pilot_raw.pdf",width = 9, height = 7,)
+
+# plot gender information per condition
+gen_freq_plot=ggplot(freq_count_gender,aes(x = gender, y = count, fill=factor(biased_gender))) + 
+  geom_col_pattern(
+    aes(pattern_fill = factor(xAI)), 
+    pattern = 'stripe',
+    fill    = 'white',
+    colour  = 'black'
+  ) + 
+  facet_grid(xAI ~ biased_gender) +
+  scale_y_continuous(sec.axis = sec_axis(~ . , name = "Explanation given to user?", breaks = NULL, labels = NULL)) +
+  theme_bw()
+
+# save plot
+ggsave("Figures/CovGenRaw_distribution_pilot_raw.pdf",width = 9, height = 7,)
+
+# show plots
+age_freq_plot
+gen_freq_plot
+```
+
+Let's run a statistical comparison between our four groups. For age and gender, we have ordinal data (in age bands), so we will use a non-parametric statistical test for ordinal data for more than 2 groups, that's the Chi-Square Test of Independence.
+
+```{r echo=FALSE, warning=FALSE}
+
+## first: age
+# get median age per group for reporting
+cumAge_counts=freq_count_age %>% group_by(cond) %>% arrange(age_group) %>% mutate(cumAge_sum = cumsum(count))
+cumAge_FB_AI=cumAge_counts[cumAge_counts$cond=="FB-AI",]
+cumAge_MB_AI=cumAge_counts[cumAge_counts$cond=="MB-AI",]
+cumAge_FB_XAI=cumAge_counts[cumAge_counts$cond=="FB-XAI",]
+cumAge_MB_XAI=cumAge_counts[cumAge_counts$cond=="MB-XAI",]
+# manual inspect: we have N people per group, in which group does the N/2-th person lie?
+medianAge_FB_AI="25-34y"
+medianAge_MB_AI="25-34y"
+medianAge_FB_XAI="25-34y"
+medianAge_MB_XAI="25-34y"
+
+## For reporting: count and exclude users who 'preferred not to answer'
+df_demo_age=df_demo
+df_demo_gender=df_demo
+
+N_noAnswer_age=nrow(df_demo_age[df_demo_age$age_group=="prefer not to say",])
+N_noAnswer_gender=nrow(df_demo_gender[df_demo_gender$gender=="prefer not to say",])
+## remove 'prefer not to answer' entries
+df_demo_age = df_demo_age[!df_demo_age$age_group=="prefer not to say",]
+df_demo_gender = df_demo_gender[!df_demo_gender$gender=="prefer not to say",]
+
+# statistical test for age:
+aget="Chi^2"
+agetest=chisq.test(df_demo_age$age_group, df_demo_age$cond)
+ageeffsize=chisq_to_cramers_v(chisq = agetest$statistic, n = nrow(df_demo_age),
+                              nrow = length(unique(df_demo_age$age_group)),
+                                ncol = length(unique(df_demo_age$cond)),
+                              p = agetest$p.value)
+
+matchingRes=paste(matchingRes,paste("\n","AgeRaw",sep=""),"",aget,agetest$p.value,ageeffsize$Cramers_v_adjusted,sep = ",")
+
+# statistical test for gender:
+gent="Chi^2"
+gentest=chisq.test(df_demo_gender$gender, df_demo_gender$cond)
+geneffsize=chisq_to_cramers_v(chisq = gentest$statistic, n = nrow(df_demo_gender),
+                              nrow = length(unique(df_demo_gender$gender)),
+                                ncol = length(unique(df_demo_gender$cond)),
+                              p = gentest$p.value)
+
+matchingRes=paste(matchingRes,paste("\n","GenderRaw",sep=""),"",gent,gentest$p.value,geneffsize$Cramers_v_adjusted,sep = ",")
+
+```
+
+We acquired data from `r length(unique(df_demo$user_id))` participants, with
+
+`r length(unique(df_demo$user_id[df_demo$cond=="FB-AI"]))` users in the "FB-AI" group (`r freq_count_gender$count[freq_count_gender$cond=="FB-AI" & freq_count_gender$gender=="female"]` female, `r freq_count_gender$count[freq_count_gender$cond=="FB-AI" & freq_count_gender$gender=="male"]` male, median age group is `r medianAge_FB_AI`), and 
+
+`r length(unique(df_demo$user_id[df_demo$cond=="MB-AI"]))` users in the "MB-AI" group (`r freq_count_gender$count[freq_count_gender$cond=="MB-AI" & freq_count_gender$gender=="female"]` female, `r freq_count_gender$count[freq_count_gender$cond=="MB-AI" & freq_count_gender$gender=="male"]` male, `r freq_count_gender$count[freq_count_gender$cond=="MB-AI" & freq_count_gender$gender=="non-binary"]` non-binary, median age group is `r medianAge_MB_AI`), and 
+
+`r length(unique(df_demo$user_id[df_demo$cond=="FB-XAI"]))` users in the "FB-XAI" group (`r freq_count_gender$count[freq_count_gender$cond=="FB-XAI" & freq_count_gender$gender=="female"]` female, `r freq_count_gender$count[freq_count_gender$cond=="FB-XAI" & freq_count_gender$gender=="male"]` male, median age group is `r medianAge_FB_XAI`), and 
+
+`r length(unique(df_demo$user_id[df_demo$cond=="MB-XAI"]))` users in the "MB-XAI" group (`r freq_count_gender$count[freq_count_gender$cond=="MB-XAI" & freq_count_gender$gender=="female"]` female, `r freq_count_gender$count[freq_count_gender$cond=="MB-XAI" & freq_count_gender$gender=="male"]` male, `r freq_count_gender$count[freq_count_gender$cond=="MB-XAI" & freq_count_gender$gender=="non-binary"]` non-binary, median age group is `r medianAge_MB_XAI`).
+
+The analysis showed for *Age*:
+
+* We have age information for all but `r N_noAnswer_age` participant overall.
+
+* Is there a significant difference in terms of age between the groups? We compared distribution of age of participants between conditions using a `r aget` test. This showed: Chi2=`r agetest$statistic `, p=`r agetest$p.value `, Cramer's V = `r ageeffsize `
+
+The analysis showed for *Gender*:
+
+* Is there a significant difference in terms of gender distribution between the groups? We compared gender distribution for users in explanation condition and users in the control condition using a `r gent` test. This showed: Chi2=`r gentest$statistic `, p=`r gentest$p.value `, Cramer's V = `r geneffsize `
+
+## Quality criteria
+
+Before going into the hypotheses, we should apply some quality criteria to our data. Sub-quality data should be removed. The following subsections take care of such cases.
+
+### Identify "speeders" and "dawdlers"
+
+Speeders are people clicking through the study way too quickly to do the task properly.
+Dawdlers are people taking unusually long. This might indicate them leaving the screen / being distracted.
+
+Aim: identify IDs being faster / slower than specified values.
+This part will tag users that deviate less or more than 3*SD from the population's mean.
+
+```{r echo=FALSE, fig.align = "center", fig.height = 4, fig.width = 7}
+
+# Fix: End time was not logged for one participant; replace empty string with NA
+df_demo["end_time"][df_demo["end_time"] == ''] <- NA
+
+# compute mean time needed for the full study:
+df_demo$exp_time=difftime(df_demo$end_time,df_demo$start_time,units = "sec")
+
+# mean time:
+exp_time_mean=as_hms(mean(df_demo$exp_time,na.rm=TRUE))
+exp_time_sd=as_hms(sd(df_demo$exp_time,na.rm=TRUE))
+
+# get lower / upper bound for exp. time
+#(more or less than 2 standard devs away from the population mean)
+exp_time_upper_bound=as_hms(exp_time_mean+3*exp_time_sd)
+exp_time_lower_bound=as_hms(exp_time_mean-3*exp_time_sd)
+
+# take a look: plot experimental times per participant, per condition
+p_exp_time=ggplot(df_demo,aes(x=user_id,y=as.numeric(exp_time),fill=biased_gender))+
+  geom_point()+
+  facet_grid(xAI ~ biased_gender)+
+  geom_hline(yintercept=exp_time_mean)+
+  geom_hline(yintercept=as.numeric(exp_time_upper_bound),linetype="dashed", color = "red")+
+  geom_hline(yintercept=as.numeric(exp_time_lower_bound),linetype="dashed", color = "red")+
+  labs(title="Time needed for experiment",x="User ID", y = "Experimental time in seconds")+
+  theme_bw()
+
+# save plot
+ggsave("Figures/DatQual_experimental_times_raw.pdf",width = 9, height = 7,)
+
+# get IDs of "speeders"
+speeder_ids=df_demo$user_id[df_demo$exp_time<exp_time_lower_bound]
+speeder_ids=speeder_ids[!is.na(speeder_ids)]
+
+# get IDs of "dawdlers"
+dawdler_ids=df_demo$user_id[df_demo$exp_time>exp_time_upper_bound]
+dawdler_ids=dawdler_ids[!is.na(dawdler_ids)]
+
+# look at response data of speeders:
+# df_resp[df_resp$user_id %in% speeder_ids,]
+
+```
+
+### Identify participants failing the survey attention check
+
+In addition to comprehensive comprehension questions in the beginning, we include 1 attention check during survey (item no 6).
+
+Aim: Identify IDs of users getting this check wrong.
+
+```{r echo=FALSE}
+
+# Attention check: did users detect the "red hering" question (item 6); also consider removing those who did not!
+red_hering="Please select 'I disagree strongly' to confirm you're paying attention."
+red_hering_id=6
+df_red_hering_resp=df_survey[df_survey$question_id==red_hering_id,]
+attention_fail_survey_ids=df_red_hering_resp$user_id[df_red_hering_resp$response!=1]
+
+# look at performance data of non-attentive users:
+# df_resp[df_resp$user_id %in% attention_fail_survey_ids,]
+
+```
+
+### Identify "straight-liners" in decision phases
+
+Identify users who keep selecting either the right or the left image. This can be sign that the task was not done attentively.
+
+Aim: identify IDs of users "straight-lining" in at least one of the non-interaction phases (note: due to AI recommendations, one side might have been favored - we do not want to punish following the AI assistant).
+How many repeated choices count as "straightlining"?
+This is a design decision. We decide that a "straightliner" is someone who keeps selecting one side in more than 10 consecutive trials (straightlining_max_task = 10).
+
+```{r echo=FALSE}
+
+# note position of final choice:
+df_resp$choice_pos <- ifelse(df_resp$choice == df_resp$p1, "p1", "p2")
+
+df_straightline_check = df_resp
+# alternative: only for phases that are not AI influenced:
+df_straightline_check = df_resp[!df_resp$phase_name=="Intervention Phase",]
+
+# determine counts of consecutive trials of only using p1 or p2
+df_straightline_check$consecutive_count=sequence(rle(as.character(df_straightline_check$choice_pos))$lengths)
+
+# determine straightlining_max_task
+straightlining_max_task = 10
+
+# find users that exceed straightlining_max_task
+df_straightline_check$repeated_choice_pos = ifelse(df_straightline_check$consecutive_count > straightlining_max_task, TRUE, FALSE)
+# extract the user_id and phase_name where repeated_choice_pos is TRUE at least once
+straightliners_task <- df_straightline_check %>%
+  group_by(user_id, phase_name) %>%
+  filter(any(repeated_choice_pos)) %>%  # Keep rows where there's at least one TRUE in repeated_choice_pos
+  distinct(user_id, phase_name)  # Ensure the result only contains distinct combinations
+
+# get userIDs and count occurences
+straightliners_task_user_ids=unique(straightliners_task$user_id)
+
+# look at performance data of task-straightliners:
+# df_perf[df_perf$user_id %in% straightliners_task_user_ids,]
+
+```
+
+### Identify "straight-liners" in survey part, and "inconsistent" users
+
+Identify users who always give very uniform answers in the survey part.
+
+Aim: identify IDs of users "straight-lining", i.e. giving only responses with either positive or negative valence. Also identify those giving replies with the same valence to the reworded item and its original counterpart.
+
+```{r echo=FALSE}
+
+# drop the red hering (item no. 6)
+df_survey_exp=df_survey[df_survey$question!=red_hering,]
+
+# get valence info (4,5=pos, 3=neut, 1,2=neg)
+df_survey_exp$valence=ifelse(df_survey_exp$response>3,"pos",ifelse(df_survey_exp$response<3,"neg","neut"))
+
+# sort by users and item ids
+df_survey_exp=df_survey_exp %>% arrange(user_id,question_id)
+
+# identify users that answered only using positive / negative / neutral valence
+straightliners_survey_user_ids=df_survey_exp %>% group_by(user_id) %>% summarize(valence_var=length(unique(valence)))
+straightliners_survey_user_ids=straightliners_survey_user_ids$user_id[straightliners_survey_user_ids$valence_var==1]
+
+# Identify users based on inconsistency: same valence on item "The AI Assistant can perform the task worse than a novice human user." (item 5) and "The AI Assistant can perform the task better than a novice human user." (item 9):
+contradictory_survey_user_ids=df_survey_exp %>% group_by(user_id) %>% summarize(contradiction=valence[question_id==5]==valence[question_id==9] & valence[question_id==9]!="neut")
+contradictory_survey_user_ids=contradictory_survey_user_ids$user_id[contradictory_survey_user_ids$contradiction==TRUE]
+
+# look at survey responses of survey-straightliners; and contradictory responders:
+#df_survey_exp[df_survey_exp$user_id %in% straightliners_survey_user_ids,]
+#df_survey_exp[df_survey_exp$user_id %in% contradictory_survey_user_ids,]
+
+```
+
+### Remove data from problematic users
+
+As we have identified users that seem to have unreliable data, we want to remove them.
+
+```{r echo=FALSE}
+
+# remove speeders from all dfs
+df_resp=subset(df_resp, ! user_id %in% speeder_ids)
+df_demo=subset(df_demo, ! user_id %in% speeder_ids)
+df_conf=subset(df_conf, ! user_id %in% speeder_ids)
+df_survey_exp=subset(df_survey_exp, ! user_id %in% speeder_ids)
+
+# remove dawdlers from all dfs
+df_resp=subset(df_resp, ! user_id %in% dawdler_ids)
+df_demo=subset(df_demo, ! user_id %in% dawdler_ids)
+df_conf=subset(df_conf, ! user_id %in% dawdler_ids)
+df_survey_exp=subset(df_survey_exp, ! user_id %in% dawdler_ids)
+
+# remove attentionFailers (survey), that were not already recognized as speeders
+attention_fail_survey_ids_clean=attention_fail_survey_ids[!attention_fail_survey_ids %in% c(speeder_ids,dawdler_ids)]
+
+df_resp=subset(df_resp, ! user_id %in% attention_fail_survey_ids_clean)
+df_demo=subset(df_demo, ! user_id %in% attention_fail_survey_ids_clean)
+df_conf=subset(df_conf, ! user_id %in% attention_fail_survey_ids_clean)
+df_survey_exp=subset(df_survey_exp, ! user_id %in% attention_fail_survey_ids_clean)
+
+# remove task straightliners that were not already recognized as speeders / attention failers
+straightliners_task_user_ids_clean=straightliners_task_user_ids[!straightliners_task_user_ids %in% c(speeder_ids,dawdler_ids,attention_fail_survey_ids_clean)]
+
+df_resp=subset(df_resp, ! user_id %in% straightliners_task_user_ids_clean)
+df_demo=subset(df_demo, ! user_id %in% straightliners_task_user_ids_clean)
+df_conf=subset(df_conf, ! user_id %in% straightliners_task_user_ids_clean)
+df_survey_exp=subset(df_survey_exp, ! user_id %in% straightliners_task_user_ids_clean)
+
+# remove survey straightliners that were not already recognized as speeders / attention failers / task straightliners
+straightliners_survey_user_ids_clean=straightliners_survey_user_ids[!straightliners_survey_user_ids %in% c(speeder_ids,dawdler_ids,attention_fail_survey_ids_clean,straightliners_task_user_ids_clean)]
+
+df_resp=subset(df_resp, ! user_id %in% straightliners_survey_user_ids_clean)
+df_demo=subset(df_demo, ! user_id %in% straightliners_survey_user_ids_clean)
+df_conf=subset(df_conf, ! user_id %in% straightliners_survey_user_ids_clean)
+df_survey_exp=subset(df_survey_exp, ! user_id %in% straightliners_survey_user_ids_clean)
+
+# remove survey contradictors that were not already recognized as speeders / attention failers / task straightliners / survey straightliners
+contradictory_survey_user_ids_clean=contradictory_survey_user_ids[!contradictory_survey_user_ids %in% c(speeder_ids,dawdler_ids,attention_fail_survey_ids_clean,straightliners_task_user_ids_clean,straightliners_survey_user_ids_clean)]
+
+df_resp=subset(df_resp, ! user_id %in% contradictory_survey_user_ids_clean)
+df_demo=subset(df_demo, ! user_id %in% contradictory_survey_user_ids_clean)
+df_conf=subset(df_conf, ! user_id %in% contradictory_survey_user_ids_clean)
+df_survey_exp=subset(df_survey_exp, ! user_id %in% contradictory_survey_user_ids_clean)
+
+```
+
+### Before it gets serious, do some pre-processing of the response data
+
+```{r echo=FALSE}
+
+# Remove control trials where p1_gender == p2_gender
+df_resp_filtered <- df_resp %>%
+  filter(p1_gender != p2_gender)
+
+# recode phase names
+df_resp_filtered$phase_name[df_resp_filtered$phase_name == "Pre phase "] = "PrePhase"
+df_resp_filtered$phase_name[df_resp_filtered$phase_name == "Intervention Phase"] = "InterventionPhase"
+df_resp_filtered$phase_name[df_resp_filtered$phase_name == "Post Phase"] = "PostPhase"
+
+# Generate the overview of row counts per user_id and phase_name
+# this may serve as a santity check: did all users do 14 diff-gender decisions in each trial?
+user_phase_counts <- df_resp_filtered %>%
+  group_by(user_id, phase_name) %>%
+  summarise(row_count = n(), .groups = 'drop')
+
+df_resp_filtered_counts=df_resp_filtered %>% count(user_id, phase_name)
+df_resp_filtered_counts=merge(df_resp_filtered_counts,df_cond,by="user_id")
+
+# next, compute the composite scores of the shown candidates for comparison
+df_resp_filtered$p1_score=df_resp_filtered$p1_experience+df_resp_filtered$p1_education+df_resp_filtered$p1_references+df_resp_filtered$p1_soft_skills
+df_resp_filtered$p2_score=df_resp_filtered$p2_experience+df_resp_filtered$p2_education+df_resp_filtered$p2_references+df_resp_filtered$p2_soft_skills
+
+# identify those trials that where both candidates have the same score, and thus only consider those cases with same score for both candidates (i.e., objectively comparable)
+df_resp_filtered$equal_score_trials=ifelse(df_resp_filtered$p1_score==df_resp_filtered$p2_score, TRUE, FALSE)
+
+df_resp_filtered <- df_resp_filtered %>%
+  filter(equal_score_trials)
+```
+
+So to summarize:
+
+* we have `r userNo_raw` users to begin with
+* we remove `r length(speeder_ids)` speeders and `r length(dawdler_ids)` dawdlers
+* of the remaining participants, we remove `r length(attention_fail_survey_ids_clean)` users that failed the attention question during the survey
+* of the remaining participants, we remove `r length(straightliners_task_user_ids_clean)` users that consistently clicked on the image on one side
+* of the remaining participants, we remove 
+remove `r length(straightliners_survey_user_ids_clean)` users that straightlined in the survey
+* of the remaining participants, we remove 
+remove `r length(contradictory_survey_user_ids_clean)` users give contradictory responses in the survey
+
+Finally: How many users do we have in our clean performance df? `r length(unique(df_resp$user_id))`
+
+### Final, clean dataset (N=294)
+
+```{r echo=FALSE}
+
+freq_count_age = df_demo %>% 
+  group_by(age_group, xAI, biased_gender, cond) %>% 
+  summarise(count = n(), .groups = 'drop') 
+
+freq_count_gender = df_demo %>% 
+  group_by(gender, xAI, biased_gender, cond) %>% 
+  summarise(count = n(), .groups = 'drop') 
+
+# plot age information per condition
+age_freq_plot=ggplot(freq_count_age,aes(x = age_group, y = count, fill=factor(biased_gender))) +
+  geom_col_pattern(
+    aes(pattern_fill = factor(xAI)), 
+    pattern = 'stripe',
+    fill    = 'white',
+    colour  = 'black'
+  ) + 
+  facet_grid(xAI ~ biased_gender) +
+  scale_y_continuous(sec.axis = sec_axis(~ . , name = "Explanation given to user?", breaks = NULL, labels = NULL)) +
+  theme_bw()
+
+# save plot
+ggsave("Figures/CovAgeRaw_distribution_pilot_clean.pdf",width = 9, height = 7,)
+
+# plot gender information per condition
+gen_freq_plot=ggplot(freq_count_gender,aes(x = gender, y = count, fill=factor(biased_gender))) + 
+  geom_col_pattern(
+    aes(pattern_fill = factor(xAI)), 
+    pattern = 'stripe',
+    fill    = 'white',
+    colour  = 'black'
+  ) + 
+  facet_grid(xAI ~ biased_gender) +
+  scale_y_continuous(sec.axis = sec_axis(~ . , name = "Explanation given to user?", breaks = NULL, labels = NULL)) +
+  theme_bw()
+
+# save plot
+ggsave("Figures/CovGenRaw_distribution_pilot_clean.pdf",width = 9, height = 7,)
+
+# show plots
+age_freq_plot
+gen_freq_plot
+
+## first: age
+# get median age per group for reporting
+cumAge_counts=freq_count_age %>% group_by(cond) %>% arrange(age_group) %>% mutate(cumAge_sum = cumsum(count))
+cumAge_FB_AI=cumAge_counts[cumAge_counts$cond=="FB-AI",]
+cumAge_MB_AI=cumAge_counts[cumAge_counts$cond=="MB-AI",]
+cumAge_FB_XAI=cumAge_counts[cumAge_counts$cond=="FB-XAI",]
+cumAge_MB_XAI=cumAge_counts[cumAge_counts$cond=="MB-XAI",]
+# manual inspect: we have N people per group, in which group does the N/2-th person lie?
+# CHECK HERE too: did some participants select "prefer not to answer"? If so, these entries need to go.
+medianAge_FB_AI="25-34y"
+medianAge_MB_AI="25-34y"
+medianAge_FB_XAI="25-34y"
+medianAge_MB_XAI="25-34y"
+
+## For reporting: count users who 'prefered not to answer'
+df_demo_age=df_demo
+df_demo_gender=df_demo
+
+N_noAnswer_age=nrow(df_demo_age[df_demo_age$age_group=="prefer not to say",])
+N_noAnswer_gender=nrow(df_demo_gender[df_demo_gender$gender=="prefer not to say",])
+## remove 'prefer not to answer' entries
+df_demo_age = df_demo_age[!df_demo_age$age_group=="prefer not to say",]
+df_demo_gender = df_demo_gender[!df_demo_gender$gender=="prefer not to say",]
+
+# statistical test for age:
+aget="Chi^2"
+agetest=chisq.test(df_demo_age$age_group, df_demo_age$cond)
+ageeffsize=chisq_to_cramers_v(chisq = agetest$statistic, n = nrow(df_demo_age),
+                              nrow = length(unique(df_demo_age$age_group)),
+                                ncol = length(unique(df_demo_age$cond)),
+                              p = agetest$p.value)
+
+matchingRes=paste(matchingRes,paste("\n","AgeClean",sep=""),"",aget,agetest$p.value,ageeffsize$Cramers_v_adjusted,sep = ",")
+
+# statistical test for gender:
+gent="Chi^2"
+gentest=chisq.test(df_demo_gender$gender, df_demo_gender$cond)
+geneffsize=chisq_to_cramers_v(chisq = gentest$statistic, n = nrow(df_demo_gender),
+                              nrow = length(unique(df_demo_gender$gender)),
+                                ncol = length(unique(df_demo_gender$cond)),
+                              p = gentest$p.value)
+
+matchingRes=paste(matchingRes,paste("\n","GenderClean",sep=""),"",gent,gentest$p.value,geneffsize$Cramers_v_adjusted,sep = ",")
+
+```
+To sum up, in our final data we have `r length(unique(df_demo$user_id))` participants, with
+
+`r length(unique(df_demo$user_id[df_demo$cond=="FB-AI"]))` users in the "FB-AI" group (`r freq_count_gender$count[freq_count_gender$cond=="FB-AI" & freq_count_gender$gender=="female"]` female, `r freq_count_gender$count[freq_count_gender$cond=="FB-AI" & freq_count_gender$gender=="male"]` male, median age group is `r medianAge_FB_AI`), and 
+
+`r length(unique(df_demo$user_id[df_demo$cond=="MB-AI"]))` users in the "MB-AI" group (`r freq_count_gender$count[freq_count_gender$cond=="MB-AI" & freq_count_gender$gender=="female"]` female, `r freq_count_gender$count[freq_count_gender$cond=="MB-AI" & freq_count_gender$gender=="male"]` male, `r freq_count_gender$count[freq_count_gender$cond=="MB-AI" & freq_count_gender$gender=="non-binary"]` non-binary, median age group is `r medianAge_MB_AI`), and 
+
+`r length(unique(df_demo$user_id[df_demo$cond=="FB-XAI"]))` users in the "FB-XAI" group (`r freq_count_gender$count[freq_count_gender$cond=="FB-XAI" & freq_count_gender$gender=="female"]` female, `r freq_count_gender$count[freq_count_gender$cond=="FB-XAI" & freq_count_gender$gender=="male"]` male, median age group is `r medianAge_FB_XAI`), and 
+
+`r length(unique(df_demo$user_id[df_demo$cond=="MB-XAI"]))` users in the "MB-XAI" group (`r freq_count_gender$count[freq_count_gender$cond=="MB-XAI" & freq_count_gender$gender=="female"]` female, `r freq_count_gender$count[freq_count_gender$cond=="MB-XAI" & freq_count_gender$gender=="male"]` male, median age group is `r medianAge_MB_XAI`).
+
+The analysis showed for *Age*:
+
+* Is there a significant difference in terms of age between the groups? We compared ages of users in explanation condition and users in the control condition using a `r aget` test. This showed: Chi2=`r agetest$statistic `, p=`r agetest$p.value `, Cramer's V = `r ageeffsize `
+  
+The analysis showed for *Gender*:
+
+* Is there a significant difference in terms of gender between the groups? We compared gender distribution for users in explanation condition and users in the control condition using a `r gent` test. This showed: Chi2=`r gentest$statistic `, p=`r gentest$p.value `, Cramer's V = `r geneffsize `
+
+## Hypotheses
+
+Our main hypotheses are:
+
+*H1) Participants receiving XAI CEs will show different rates of agreement with AI recommendations compared to those receiving black-box AI recommendations.
+
+*H2) Interaction with biased (X)AI recommendations will shift participants’ gender-based decision patterns in subsequent independent evaluations, increasing alignment with the (X)AI’s bias direction.
+
+*H3) Decision confidence will vary across experimental phases, depending on the experimental manipulation.
+
+*H4) Participants receiving XAI CEs will show higher rates of trust in the AI recommendations compared to those receiving black-box AI recommendations.
+
+# Statistical assessment
+
+We perform all statistical analyses with the experimental condition - Female Bias + AI recommendations (FB-AI), Male Bias + AI recommendations (MB-AI), Female Bias + XAI recommendations (FB-XAI), and Male Bias + XAI recommendations (MB-XAI ) - serving as the independent variable. 
+- Distributional differences in demographic covariates were evaluated using $\chi^2$ tests.
+- The bias shift (BS) in participant behavior is computed as: $BS=MB_{post}-MB{pre}$, where $MB_{post}$ is the male bias in the post-(X)AI-interaction phase, and $MB_{pre}$ is the male bias in the pre-(X)AI-interaction phase. Positive values indicate a shift toward male bias, while negative values indicate a shift toward female bias. To evaluate the bias shift, the proportion of (X)AI alignment during the interaction phase, and the accumulated trust scores derived from the post-study assessment, we fitted separate 2×2 linear models with factors biased gender (FB vs. MB) and XAI (AI vs. XAI).
+- For the longitudinal analysis of confidence, measured after each of the three decision phases, we employ a linear mixed-effects model. This model incorporates fixed effects for group, phase, and their interaction, and included a by-subject random intercept to account for within-participant correlations.
+
+## H1) Participants receiving XAI CEs will show different rates of agreement with AI recommendations compared to those receiving black-box AI recommendations.
+
+```{r echo=FALSE, fig.height = 4, fig.width = 7, fig.align = "center"}
+
+# add a column coding whether participant's decision was aligned with AI
+df_resp_filtered$AI_aligned_decision=df_resp_filtered$ai_gender==df_resp_filtered$choice_gen
+
+# compute mean % of AI alignment (only in intervention phase)
+df_AI_alignment=df_resp_filtered[df_resp_filtered$phase_name=="InterventionPhase",] %>% group_by(user_id,cond,biased_gender,xAI) %>% summarize(percentage_AI_aligned=mean(AI_aligned_decision))
+
+#plot AI alignment per condition
+AI_alignment_plot=ggplot(df_AI_alignment,aes(x = user_id, y = percentage_AI_aligned, fill=factor(cond))) + 
+  geom_bar(stat="identity", color="black", 
+           position=position_dodge()) +
+  labs(
+    title = "Percentage of AI-aligned Decisions in Intervention Phase by User ID",
+    x = "User ID",
+    y = "% of AI-aligned Decisions",
+    fill = "Condition"
+  ) +
+  theme_bw()+
+  scale_colour_muted()
+
+# save
+ggsave("Figures/H1_AI_aligned_decisions_per_user.pdf",width = 5, height = 6,)
+
+#compute summary stats
+df_AI_alignment_summary=data_summary(df_AI_alignment,varname="percentage_AI_aligned",groupnames=c("cond","xAI","biased_gender"))
+
+df_AI_alignment_summary$cond = factor(df_AI_alignment_summary$cond, levels=c("FB-AI","MB-AI","FB-XAI","MB-XAI"))
+
+#plot AI alignment per condition
+AI_alignment_summary_plot=ggplot(df_AI_alignment_summary,aes(x = factor(cond), y = mean, fill=factor(cond))) +
+  geom_col_pattern(
+    alpha=0.9,
+    pattern = 'stripe',
+    pattern_density = df_AI_alignment_summary$xAI/10,
+    pattern_spacing = 0.04,
+    pattern_fill    = 'white',
+    pattern_colour  = NA,
+    position=position_dodge()
+  ) +
+  geom_errorbar(aes(ymin=mean-sem, ymax=mean+sem),size=1,width=.2,
+                 position=position_dodge(.9))+
+  labs(
+    x = "Condition",
+    y = "Mean Proportion of\nAI-Aligned Decisions",
+    fill = "Condition"
+  ) +
+  scale_y_continuous(limit=c(0,.8))+
+  theme_minimal(base_size = 14)+
+  theme(panel.grid.major.x = element_blank(),legend.position="none",axis.text.x = element_text(color = "black", size = 14),axis.text.y = element_text(color = "black", size = 14))+
+  colScale_muted_fill+
+  colScale_muted_colour
+
+# save
+ggsave("Figures/H1_mean_AI_aligned_decisions_per_cond.pdf",width = 7, height = 4,)
+ggsave("Figures/H1_mean_AI_aligned_decisions_per_cond.eps",width = 7, height = 4,device=cairo_ps)
+
+# show plot
+AI_alignment_summary_plot
+
+```
+
+Now on to the statistics: are there systematic group differences in terms of AI alignment?
+
+```{r echo=FALSE, fig.height = 4, fig.width = 7, fig.align = "center"}
+
+# approach 2x2 design, factors biased_gender and xAI
+AI_aligment_effect= lm(percentage_AI_aligned ~ biased_gender*xAI, data = df_AI_alignment)
+AI_aligment_effect_anova=anova(AI_aligment_effect)
+names(AI_aligment_effect_anova)=c("DF","SumSq","MeanSq","Fvalue","Pvalue") # rename fields for easy access
+
+print("ANOVA table:")
+print(AI_aligment_effect_anova)
+
+AI_aligment_effect_effsize=effectsize::eta_squared(AI_aligment_effect,partial = TRUE)
+
+# so far, there is not significant main effect or interaction - too bad!
+# nevertheless, don't forget to report mean AI-alignment (across groups)
+
+mean_AI_alignment=mean(df_AI_alignment_summary$mean)
+
+```
+
+Neither main effect, nor the interaction seems to be statistically significant.
+Thus, we cannot confirm H1 here.
+
+## H2) Interaction with biased (X)AI recommendations will shift participants’ gender-based decision patterns in subsequent independent evaluations, increasing alignment with the (X)AI’s bias direction.
+
+First, we need to compute and visualize the independent measure 'bias_shift' (from pre-post).
+
+```{r echo=FALSE, fig.height = 4, fig.width = 7, fig.align = "center"}
+
+# Calculate the proportion of male/female choices and bias score
+df_resp_bias <- df_resp_filtered %>%
+  group_by(user_id, phase_name) %>%
+  summarise(
+    Nm = sum(choice_gender == "M"),     # Number of male choices
+    Nf = sum(choice_gender == "F"),     # Number of female choices
+    total_choices = n(),                # Calculate total choices for each user and phase
+    biased_gender = first(biased_gender),   # Keep the first biased_gender value from the group
+    xAI = first(xAI),   # Keep the first xAI value from the group
+    .groups = "drop"
+  ) %>%
+  mutate(
+    total_choices = total_choices, # how many choices are considered?
+    Pm = Nm / total_choices,  # Proportion of male choices
+    Pf = Nf / total_choices,  # Proportion of female choices
+    bias_score = Pm - Pf,      # Bias score
+  )
+
+df_resp_bias$biased_gender=as.factor(df_resp_bias$biased_gender)
+# Define the desired order for the facets (phase_name)
+phase_order <- c("PrePhase", "InterventionPhase", "PostPhase")
+
+#Now looking at the bias shift:
+
+# Separate the Pre-Intervention and Post-Intervention phases and calculate bias_score for both
+df_resp_bias_wide <- df_resp_bias %>%
+  filter(phase_name %in% c("PrePhase", "PostPhase")) %>%
+  select(user_id, phase_name, biased_gender, xAI,bias_score) %>% #, bias_score_weighted,bias_score_abs) %>%
+  pivot_wider(
+    names_from = phase_name,
+    values_from = bias_score,#c(bias_score, bias_score_weighted, bias_score_abs)#,
+    names_prefix = "bias_score_"
+  )
+
+# get rid of na rows - what remains?
+df_resp_bias_wide=df_resp_bias_wide[!is.na(df_resp_bias_wide$bias_score_PostPhase),]
+df_resp_bias_wide=df_resp_bias_wide[!is.na(df_resp_bias_wide$bias_score_PrePhase),]
+
+# in this way, we reduce our dataset:
+num_FB_AI_equal_sores=length(df_resp_bias_wide$user_id[df_resp_bias_wide$biased_gender=="F" & df_resp_bias_wide$xAI == 0])
+num_FB_XAI_equal_sores=length(df_resp_bias_wide$user_id[df_resp_bias_wide$biased_gender=="F" & df_resp_bias_wide$xAI == 1])
+num_MB_AI_equal_sores=length(df_resp_bias_wide$user_id[df_resp_bias_wide$biased_gender=="M" & df_resp_bias_wide$xAI == 0])
+num_MB_XAI_equal_sores=length(df_resp_bias_wide$user_id[df_resp_bias_wide$biased_gender=="M" & df_resp_bias_wide$xAI == 1])
+
+# Calculate the bias_shift as the difference between bias_score for Pre-Intervention and Post-Intervention
+# IMPORTANT: we compute post - pre to properly reflect the bias shift
+df_resp_bias_wide$bias_shift = df_resp_bias_wide$bias_score_PostPhase - df_resp_bias_wide$bias_score_PrePhase
+
+# Plot biased_gender per user_id, with separate facets for phase_name
+H2_userBiasShift_by_Cond = ggplot(df_resp_bias_wide, aes(x = user_id, y = bias_shift, fill = biased_gender)) +
+  geom_bar(stat = "identity") +  # Use bars to represent biased_gender for each user
+  facet_grid(xAI ~ biased_gender)+
+  labs(
+    title = "Gender Bias Shift (Pre-to-Post) by User by Condition",
+    x = "User ID",
+    y = "Bias shift shown by users\n(negative = getting more female, 0 = no bias change, 1 = getting more male)",
+    fill = "Gender Bias"
+  ) +
+  theme_bw() +  # Clean theme for the plot
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels for better readability
+    strip.text = element_text(size = 12)  # Make facet labels larger for clarity
+  )
+
+# save plot
+ggsave("Figures/H2_userBiasShift_by_Cond.pdf",width = 9, height = 7,)
+
+# compute summary statistics:
+df_resp_bias_shift_summary_stats=data_summary(df_resp_bias_wide,varname="bias_shift",groupnames=c("biased_gender","xAI"))
+
+# For the publication, make a proper interaction plot:
+df_resp_bias_shift_summary_stats$cond=c("FB-AI","FB-XAI","MB-AI","MB-XAI")
+gender_bias_labels=c("F"="FB","M"="MB")
+
+# visualize summary statistics:
+H2_userBiasShift_by_Cond_stats = ggplot(df_resp_bias_shift_summary_stats, aes(x = as.factor(xAI), y = mean, fill=as.factor(cond))) +
+  geom_col_pattern(
+    alpha=0.9,
+    pattern = 'stripe',
+    pattern_density = df_AI_alignment_summary$xAI/10,
+    pattern_spacing = 0.04,
+    pattern_fill    = 'white',
+    pattern_colour  = NA,
+    position=position_dodge()
+  ) +
+  geom_hline(yintercept=0, linetype="dashed", color = "red", size=1.5)+
+  geom_errorbar(aes(ymin=mean-sem, ymax=mean+sem),size=1,width=.2,
+                 position=position_dodge(.9))+
+  facet_grid(~biased_gender,labeller = as_labeller(gender_bias_labels))+
+  guides(y.sec = guide_none("← greater male bias                                        greater female bias →"),x.sec = guide_none("Bias shown by AI"))+
+  labs(
+    x = "XAI condition",
+    y = "Bias Shift (Pre- to Post-AI-Interaction) in Participant Behavior",
+    fill = "XAI condition"
+  ) +
+  theme_minimal(base_size = 14)+
+  theme(
+    strip.text = element_text(size = 12),  # Make facet labels larger for clarity
+    panel.grid.major.x = element_blank(),legend.position="none"
+  )+
+  colScale_muted_fill+
+  colScale_muted_colour+
+  scale_x_discrete(labels=c("0" = "AI", "1" = "XAI"))
+
+# save plot
+ggsave("Figures/H2_userBiasShift_by_Cond_stats.pdf",width = 9, height = 7)
+ggsave("Figures/H2_userBiasShift_by_Cond_stats.eps",width = 7, height = 6, device=cairo_ps)
+
+# visualize summary statistics - slightly different, will be used later:
+H2_userBiasShift_by_Cond_stats_V2 = ggplot(df_resp_bias_shift_summary_stats, aes(x = as.factor(xAI), y = mean, fill=as.factor(cond),pattern = as.factor(xAI))) +
+  geom_col_pattern(
+    alpha=0.9,
+    pattern = 'stripe',
+    pattern_density = df_AI_alignment_summary$xAI/10,
+    pattern_spacing = 0.04,
+    pattern_fill    = 'white',
+    pattern_colour  = NA,
+    position=position_dodge()
+  )+
+  geom_hline(yintercept=0, linetype="dashed", color = "red", size=1.5)+
+  geom_errorbar(aes(ymin=mean-sem, ymax=mean+sem),size=1,width=.2,
+                 position=position_dodge(.9))+
+  guides(y.sec = guide_none("← greater male bias    greater female bias →"))+
+  colScale_muted_fill+
+  colScale_muted_colour+
+  scale_pattern_manual(values = c("0" = "none", "1" = "stripe")) +
+  scale_x_discrete(labels=c("0" = "AI", "1" = "XAI"))+
+  labs(
+    x = "XAI condition",
+    y = "Bias Shift (Pre- to Post-AI-Interaction)\nin Participant Behavior",
+    fill = "XAI condition",
+    pattern = "Bias"
+  ) +
+  theme_minimal(base_size = 14)+
+  theme(
+    strip.text = element_text(size = 12),  # Make facet labels larger for clarity
+    panel.grid.major.x = element_blank(),legend.position="none"
+  )
+
+# show plot
+H2_userBiasShift_by_Cond_stats
+
+H2_userBiasShift_genderbiasXxai_interaction_facet_grid=ggplot(df_resp_bias_shift_summary_stats, aes(x=as.factor(xAI), y=mean, colour=cond, group=biased_gender))+
+  geom_hline(yintercept=0, linetype="dashed", color = "red", size=1.5)+
+  geom_line(color="black")+ #aes(linetype=biased_gender), size=.6) + 
+  geom_point(aes(shape=cond,fill=cond), size=5) + 
+  geom_errorbar(aes(ymax=mean+sem, ymin=mean-sem),size=1,width=.2)+
+  guides(y.sec = guide_none("← greater male bias                                        greater female bias →"),x.sec = guide_none("Bias shown by AI"))+
+  labs(
+    x = "XAI condition",
+    y = "Bias shift (pre- to post-AI-interaction) in participant behavior"
+  )+
+  facet_grid(~biased_gender,labeller = as_labeller(gender_bias_labels))+
+  theme_minimal(base_size = 14)+
+  theme(panel.grid.major.x = element_blank())+
+  colScale_muted_fill+
+  colScale_muted_colour+
+  scale_x_discrete(labels=c("0" = "AI", "1" = "XAI"))+
+  scale_shape_manual(values=c(15, 16, 17,23))
+  
+ggsave("Figures/H2_userBiasShift_by_Cond_interaction_facets.pdf",width = 9, height = 7)
+ggsave("Figures/H2_userBiasShift_by_Cond_interaction_facets.eps",width = 7, height = 6, device=cairo_ps)
+
+H2_userBiasShift_genderbiasXxai_interaction_facet_grid=ggplot(df_resp_bias_shift_summary_stats, aes(x=as.factor(xAI), y=mean, colour=cond, group=biased_gender))+
+  geom_hline(yintercept=0, linetype="dashed", color = "red", size=1.5)+
+  geom_line(color="black")+ #aes(linetype=biased_gender), size=.6) + 
+  geom_point(aes(shape=cond,fill=cond), size=5) + 
+  geom_errorbar(aes(ymax=mean+sem, ymin=mean-sem),size=1,width=.2)+
+  guides(y.sec = guide_none("← greater male bias      greater female bias →"))+
+  labs(
+    #title = " ",
+    x = "XAI condition",
+    y = "Bias shift (pre- to post-AI-interaction) in participant behavior",
+    colour = "Condition"
+  )+
+  theme_minimal(base_size = 14)+
+  theme(panel.grid.major.x = element_blank())+
+  colScale_muted_fill+
+  colScale_muted_colour+
+  scale_x_discrete(labels=c("0" = "AI", "1" = "XAI"))+
+  scale_shape_manual(values=c(15, 16, 17,23))
+  
+ggsave("Figures/H2_userBiasShift_by_Cond_interaction.pdf",width = 9, height = 7)
+ggsave("Figures/H2_userBiasShift_by_Cond_interaction.eps",width = 7, height = 6,device=cairo_ps)
+
+```
+
+```{r echo=FALSE, fig.height = 4, fig.width = 7, fig.align = "center"}
+# gather demographic data once more:
+
+df_demo_equalAptitude_set=df_demo[df_demo$user_id %in% df_resp_bias_wide$user_id,]
+
+freq_count_age = df_demo_equalAptitude_set %>% 
+  group_by(age_group, xAI, biased_gender, cond) %>% 
+  summarise(count = n(), .groups = 'drop') 
+
+freq_count_gender = df_demo_equalAptitude_set %>% 
+  group_by(gender, xAI, biased_gender, cond) %>% 
+  summarise(count = n(), .groups = 'drop') 
+
+# plot age information per condition
+age_freq_plot=ggplot(freq_count_age,aes(x = age_group, y = count, fill=factor(biased_gender))) +
+  geom_col_pattern(
+    aes(pattern_fill = factor(xAI)), 
+    pattern = 'stripe',
+    fill    = 'white',
+    colour  = 'black'
+  ) + 
+  facet_grid(xAI ~ biased_gender) +
+  scale_y_continuous(sec.axis = sec_axis(~ . , name = "Explanation given to user?", breaks = NULL, labels = NULL)) +
+  theme_bw()
+
+## save plot
+# ggsave("Figures/CovAgeRaw_distribution_pilot_clean.pdf",width = 9, height = 7,)
+
+# plot gender information per condition
+gen_freq_plot=ggplot(freq_count_gender,aes(x = gender, y = count, fill=factor(biased_gender))) + 
+  geom_col_pattern(
+    aes(pattern_fill = factor(xAI)), 
+    pattern = 'stripe',
+    fill    = 'white',
+    colour  = 'black'
+  ) + 
+  facet_grid(xAI ~ biased_gender) +
+  scale_y_continuous(sec.axis = sec_axis(~ . , name = "Explanation given to user?", breaks = NULL, labels = NULL)) +
+  theme_bw()
+
+# save plot
+# ggsave("Figures/CovGenRaw_distribution_pilot_clean.pdf",width = 9, height = 7,)
+
+# show plots
+age_freq_plot
+gen_freq_plot
+
+## first: age
+# get median age per group for reporting
+cumAge_counts=freq_count_age %>% group_by(cond) %>% arrange(age_group) %>% mutate(cumAge_sum = cumsum(count))
+cumAge_FB_AI=cumAge_counts[cumAge_counts$cond=="FB-AI",]
+cumAge_MB_AI=cumAge_counts[cumAge_counts$cond=="MB-AI",]
+cumAge_FB_XAI=cumAge_counts[cumAge_counts$cond=="FB-XAI",]
+cumAge_MB_XAI=cumAge_counts[cumAge_counts$cond=="MB-XAI",]
+# manual inspect: we have N people per group, in which group does the N/2-th person lie?
+# CHECK HERE too: did some participants select "prefer not to answer"? If so, these entries need to go.
+medianAge_FB_AI="25-34y"
+medianAge_MB_AI="25-34y"
+medianAge_FB_XAI="25-34y"
+medianAge_MB_XAI="25-34y"
+
+## For reporting: count users who 'prefered not to answer'
+df_demo_age_equalAptitude=df_demo_equalAptitude_set
+df_demo_gender_equalAptitude=df_demo_equalAptitude_set
+
+N_noAnswer_age=nrow(df_demo_age_equalAptitude[df_demo_age_equalAptitude$age_group=="prefer not to say",])
+N_noAnswer_gender=nrow(df_demo_gender_equalAptitude[df_demo_gender_equalAptitude$gender=="prefer not to say",])
+## remove 'prefer not to answer' entries
+df_demo_age_equalAptitude = df_demo_age_equalAptitude[!df_demo_age_equalAptitude$age_group=="prefer not to say",]
+df_demo_gender_equalAptitude = df_demo_gender_equalAptitude[!df_demo_gender_equalAptitude$gender=="prefer not to say",]
+
+# statistical test for age:
+aget="Chi^2"
+agetest=chisq.test(df_demo_age_equalAptitude$age_group, df_demo_age_equalAptitude$cond)
+ageeffsize=chisq_to_cramers_v(chisq = agetest$statistic, n = nrow(df_demo_age_equalAptitude),
+                              nrow = length(unique(df_demo_age_equalAptitude$age_group)),
+                                ncol = length(unique(df_demo_age_equalAptitude$cond)),
+                              p = agetest$p.value)
+
+matchingRes=paste(matchingRes,paste("\n","AgeCleanEqualApt",sep=""),"",aget,agetest$p.value,ageeffsize$Cramers_v_adjusted,sep = ",")
+
+# statistical test for gender:
+gent="Chi^2"
+gentest=chisq.test(df_demo_gender_equalAptitude$gender, df_demo_gender_equalAptitude$cond)
+geneffsize=chisq_to_cramers_v(chisq = gentest$statistic, n = nrow(df_demo_gender_equalAptitude),
+                              nrow = length(unique(df_demo_gender_equalAptitude$gender)),
+                                ncol = length(unique(df_demo_gender_equalAptitude$cond)),
+                              p = gentest$p.value)
+
+matchingRes=paste(matchingRes,paste("\n","GenderCleanEqualApt",sep=""),"",gent,gentest$p.value,geneffsize$Cramers_v_adjusted,sep = ",")
+
+```
+
+IMPORTANT NOTE! For the bias shift, we look at a further sub-sample of participants. We are reduced to the "equal aptitude set". 
+
+In our equal aptitude data we have `r length(unique(df_demo_equalAptitude_set$user_id))` participants, with
+
+`r length(unique(df_demo_equalAptitude_set$user_id[df_demo_equalAptitude_set$cond=="FB-AI"]))` users in the "FB-AI" group (`r freq_count_gender$count[freq_count_gender$cond=="FB-AI" & freq_count_gender$gender=="female"]` female, `r freq_count_gender$count[freq_count_gender$cond=="FB-AI" & freq_count_gender$gender=="male"]` male, median age group is `r medianAge_FB_AI`), and 
+
+`r length(unique(df_demo_equalAptitude_set$user_id[df_demo_equalAptitude_set$cond=="MB-AI"]))` users in the "MB-AI" group (`r freq_count_gender$count[freq_count_gender$cond=="MB-AI" & freq_count_gender$gender=="female"]` female, `r freq_count_gender$count[freq_count_gender$cond=="MB-AI" & freq_count_gender$gender=="male"]` male, median age group is `r medianAge_MB_AI`), and 
+
+`r length(unique(df_demo_equalAptitude_set$user_id[df_demo_equalAptitude_set$cond=="FB-XAI"]))` users in the "FB-XAI" group (`r freq_count_gender$count[freq_count_gender$cond=="FB-XAI" & freq_count_gender$gender=="female"]` female, `r freq_count_gender$count[freq_count_gender$cond=="FB-XAI" & freq_count_gender$gender=="male"]` male, median age group is `r medianAge_FB_XAI`), and 
+
+`r length(unique(df_demo_equalAptitude_set$user_id[df_demo_equalAptitude_set$cond=="MB-XAI"]))` users in the "MB-XAI" group (`r freq_count_gender$count[freq_count_gender$cond=="MB-XAI" & freq_count_gender$gender=="female"]` female, `r freq_count_gender$count[freq_count_gender$cond=="MB-XAI" & freq_count_gender$gender=="male"]` male, median age group is `r medianAge_MB_XAI`).
+
+The analysis showed for *Age*:
+
+* Is there a significant difference in terms of age between the groups? We compared ages of users in explanation condition and users in the control condition using a `r aget` test. This showed: Chi2=`r agetest$statistic `, p=`r agetest$p.value `, Cramer's V = `r ageeffsize `
+  
+The analysis showed for *Gender*:
+
+* Is there a significant difference in terms of gender between the groups? We compared gender distribution for users in explanation condition and users in the control condition using a `r gent` test. This showed: Chi2=`r gentest$statistic `, p=`r gentest$p.value `, Cramer's V = `r geneffsize `
+
+Now on to the statistics, looking at the bias shift shown by participants in individual conditions, ending up with a relatively simple mixed 2x2 model (biased_gender X xAI).
+
+```{r echo=FALSE, fig.height = 4, fig.width = 7, fig.align = "center"}
+
+# Setting up a simple lm (as a mixed 2x2 model, biased_gender X xAI).
+# We use a between-participant design, with IVs xAI and biased_gender,
+# investigating the effect of both (and their interaction) on bias shift.
+
+biasShift_xAI_effect= lm(bias_shift ~ biased_gender*xAI, data = df_resp_bias_wide)
+biasShift_xAI_effect_anova=anova(biasShift_xAI_effect)
+names(biasShift_xAI_effect_anova)=c("DF","SumSq","MeanSq","Fvalue","Pvalue") # rename fields for easy access
+
+print("ANOVA table:")
+print(biasShift_xAI_effect_anova)
+
+biasShift_xAI_effect_effsize=effectsize::eta_squared(biasShift_xAI_effect,partial = TRUE) # effect size eta squared
+
+# REMEMBER: WHEN THERE IS A SINGIFICANT INTERACTION, WE DO NOT INTEPRET THE MAIN EFFECT ANYMORE (we report it, though).
+
+# INTERACTION, three-way:
+biasShift_xAI_effect_posthoc_INT_biased_genderXxAI=emmeans(biasShift_xAI_effect, list(pairwise ~ biased_gender | xAI), adjust = "bonferroni")
+
+biasShift_xAI_effect_posthoc_INT_biased_genderXxAI_effsizes=eff_size(biasShift_xAI_effect_posthoc_INT_biased_genderXxAI$`emmeans of biased_gender | xAI`, sigma = sigma(biasShift_xAI_effect), edf = Inf)
+
+```
+
+These results show something striking: participants who did not receive explanations shifted their inherent biases in the same direction as the bias displayed by the AI, whereas those who received CEs shifted their bias in the opposite direction of the XAI bias!
+
+## H3) Decision confidence will vary across experimental phases, depending on the experimental manipulation.
+
+Did the experimental manipulation elicit different levels of confidence about one's own decisions?
+
+```{r echo=FALSE, fig.height = 4, fig.width = 7, fig.align = "center"}
+
+# recode phase names
+df_conf$phase_name[df_conf$phase_name == "Pre phase "] = "PrePhase"
+df_conf$phase_name[df_conf$phase_name == "Intervention Phase"] = "InterventionPhase"
+df_conf$phase_name[df_conf$phase_name == "Post Phase"] = "PostPhase"
+
+# take care of duplicate entries (small logging issue)
+df_conf=df_conf[!duplicated(df_conf),]
+
+# Define the desired order for the facets (phase_name)
+phase_order <- c("PrePhase", "InterventionPhase", "PostPhase")
+
+# Plot biased_gender per user_id, with separate facets for phase_name
+H3_userConf_by_Cond = ggplot(df_conf, aes(x = user_id, y = confidence, fill = biased_gender)) +
+  geom_bar(stat = "identity") +  # Use bars to represent biased_gender for each user
+  facet_grid(xAI ~ biased_gender ~ factor(phase_name, levels = phase_order)) +
+  #facet_wrap(~ factor(phase_name, levels = phase_order)) +  # Create a facet for each phase_name
+  labs(
+    title = "User Confidence per Condition and Phase",
+    x = "User ID",
+    y = "Confidence judgement",
+    fill = "AI - Gender Bias"
+  ) +
+  theme_minimal(base_size = 14) +  # Clean theme for the plot
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels for better readability
+    strip.text = element_text(size = 12)  # Make facet labels larger for clarity
+  )
+
+# save plot
+ggsave("Figures/H3_userConf_by_Cond.pdf",width = 9, height = 7,)
+
+# compute summary statistics:
+df_conf_summary_stats=data_summary(df_conf,varname="confidence",groupnames=c("biased_gender","xAI","phase_name"))
+
+# visualize summary statistics:
+H3_userConf_by_Cond_stats = ggplot(df_conf_summary_stats, aes(x = biased_gender, y = mean, fill=as.factor(xAI))) +
+  geom_bar(stat = "identity") +  # Use bars to represent biased_gender for each user
+  geom_errorbar(aes(ymin=mean-sem, ymax=mean+sem), width=.2,
+                 position=position_dodge(.9))+
+  facet_grid(xAI ~ factor(phase_name, levels = phase_order))+
+  labs(
+    title = "User Confidence per Condition and Phase",
+    x = "AI-induced bias",
+    y = "Mean confidence judgement",
+    fill = "XAI condition\n(0=noEx, 1=CF)"
+  ) +
+  theme_bw() +  # Clean theme for the plot
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels for better readability
+    strip.text = element_text(size = 12)  # Make facet labels larger for clarity
+  )
+
+# save plot
+ggsave("Figures/H2_userBias_by_Cond_stats.pdf",width = 9, height = 7,)
+
+# show plot
+H3_userConf_by_Cond_stats
+
+```
+
+Next: On to the statistics on confidence: We are looking at the full data across phases with a relatively complex mixed 2x2x3 model.
+
+```{r echo=FALSE, fig.height = 4, fig.width = 7, fig.align = "center"}
+
+# Setting up our LME model (as a mixed 2x2x3 model, bias by xAI by phase)
+# We use a mixed design, with one within-subjects IV (phase_name) and two between subjects IV (xAI and biased_gender),
+# investigating the effect of all on confidence.
+# Note that we add a random intercept for the participant by stating + (1|userId)
+# This makes it repeated measures, as we control for the random effect of 
+# one person doing something multiple times.
+conf_bias_xAI_phase_effect = lmer(confidence ~ biased_gender*xAI*phase_name + (1|user_id), data = df_conf)
+conf_bias_xAI_phase_effect_anova=anova(conf_bias_xAI_phase_effect)
+names(conf_bias_xAI_phase_effect_anova)=c("SumSq","MeanSq","NumDF","DenDF","Fvalue","Pvalue") # rename fields for easy access
+
+print("ANOVA table:")
+print(conf_bias_xAI_phase_effect_anova)
+
+conf_bias_xAI_phase_effect_effsize=effectsize::eta_squared(conf_bias_xAI_phase_effect,partial = TRUE) # effect size partial eta squared
+
+# REMEMBER: WHEN THERE IS A SINGIFICANT INTERACTION, DO NOT INTEPRET THE MAIN EFFECT ANYMORE (we will report it, though).
+
+# compute summary statistics:
+df_conf_summary_stats_genderbiasXphase_interaction=data_summary(df_conf,varname="confidence",groupnames=c("biased_gender","phase_name"))
+
+override.shape <- c(7, 9, 10)
+override.linetype <- c(1, 2, 3)
+
+# order phase names:
+df_conf_summary_stats_genderbiasXphase_interaction$phase_name = factor(df_conf_summary_stats_genderbiasXphase_interaction$phase_name, levels=c("PrePhase","InterventionPhase","PostPhase"))
+
+df_conf_summary_stats_genderbiasXphase_interaction$phase_name <- recode(df_conf_summary_stats_genderbiasXphase_interaction$phase_name, PrePhase = 'Pre', 
+                                       InterventionPhase = 'Intervention',
+                                       PostPhase = 'Post')
+
+#visualize the interaction:
+H3_userConf_genderbiasXphase_interaction = ggplot(df_conf_summary_stats_genderbiasXphase_interaction, aes(x=biased_gender, y=mean, colour=phase_name, group=phase_name,linetype=phase_name,shape=phase_name))+
+  geom_line(size=1, position=position_dodge(width=0.2)) +
+  geom_point(size=5,position=position_dodge(width=0.2)) + 
+  geom_errorbar(aes(ymax=mean+sem, ymin=mean-sem),size=1,width=.2,position=position_dodge(width=0.2))+
+  labs(
+    x = "Bias Shown by AI",
+    y = "Mean Confidence Judgement",
+    colour = "Phase"
+  )+
+  theme_minimal(base_size = 14)+
+  theme(panel.grid.major.x = element_blank(),legend.position="bottom",axis.text.x = element_text(color = "black", size = 14),axis.text.y = element_text(color = "black", size = 14))+
+  guides(colour = guide_legend(override.aes = list(shape = override.shape, linetype = override.linetype)))+
+  scale_colour_grey(guide = FALSE)+
+  scale_linetype(guide = FALSE)+
+  scale_x_discrete(labels=c("PrePhase" = "Pre", "InterventionPhase" = "Intervention","PostPhase" = "Post"))+
+  scale_shape_manual(values=c(7, 9, 10),guide = FALSE)
+
+ggsave("Figures/H3_userConf_genderbiasXphase_interaction.pdf",width = 9, height = 7)
+ggsave("Figures/H3_userConf_genderbiasXphase_interaction.eps",width = 7, height = 6, device=cairo_ps)
+
+# save plot
+ggsave("Figures/H3_userConf_genderbiasXphase_interaction.pdf",width = 9, height = 7,)
+
+# show plot
+H3_userConf_genderbiasXphase_interaction
+```
+
+The analysis revealed a significant two-way interaction (biased_gender x phase_name).
+
+These results suggest that while overall confidence did not differ significantly as a function of XAI or phase alone, the impact of phase on confidence was contingent upon the gender bias condition.
+
+## H4) Participants receiving XAI CEs will show higher rates of trust in the AI recommendations compared to those receiving black-box AI recommendations.
+
+We will be running a 2x2 model to evaluate this (XAI x bias direction). The hypothesis expects a significant effect of XAI factor on the accumulated trust measure.
+
+```{r echo=FALSE, fig.height = 4, fig.width = 7, fig.align = "center"}
+
+# Question catalogue (as a reminder):
+# item1: I am confident in the AI Assistant. I feel that it works well.
+# item2: The outputs of the AI Assistant are not at all predictable. REVERSE!!!
+# item3: The AI Assistant is very reliable. I can count on it to be correct all the time.
+# item4: I feel safe that when I rely on the AI Assistant I will make the right decision.
+# item5: The AI Assistant can perform the task worse than a novice human user. REVERSE!!!
+# item6: Please select 'I disagree strongly' to confirm you're paying attention. [TAKEN OUT]
+# item7: I am wary of the AI Assistant. REVERSE COMPUTATION [YET ORIGINAL ITEM]
+# item8: The AI Assistant is efficient in that it works very quickly.
+# item9: The AI Assistant can perform the task better than a novice human user.
+# item10: I do not like using the AI Assistant for decision making. REVERSE!
+
+trust_scores = df_survey_exp %>%
+  group_by(user_id,question_id,cond,xAI,biased_gender) %>%
+  summarise(
+    response_orig=response,
+    response_recoded=ifelse(question_id %in% c(1,3,4,8,9),response,
+                            response %>% recode("1"=5,"2"=4,"3"=3,"4"=2,"5"=1)
+                            ))
+
+df_trust = trust_scores %>%
+  group_by(user_id,cond,xAI,biased_gender) %>%
+  summarise(
+    summed_trust=sum(response_recoded))
+
+# Plot summed trust per user_id, colour by condition:
+H4_userTrust_by_Cond_per_User = ggplot(df_trust, aes(x = user_id, y = summed_trust, fill = cond)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Summed Trust Score by User by Condition",
+    x = "User ID",
+    y = "Summed Trust Score (min=9, max=45)")+
+  theme_bw() +  # Clean theme for the plot
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels for better readability
+    strip.text = element_text(size = 12)  # Make facet labels larger for clarity
+  )
+
+# save plot
+ggsave("Figures/H4_userTrust_by_Cond.pdf",width = 9, height = 7,)
+
+# compute summary statistics:
+df_trust_summary_stats=data_summary(df_trust,varname="summed_trust",groupnames=c("cond","biased_gender","xAI"))
+df_trust_summary_stats$cond = factor(df_trust_summary_stats$cond,levels=c("FB-AI","MB-AI","FB-XAI","MB-XAI"))
+
+# visualize summary statistics:
+H4_userTrust_by_Cond_stats = ggplot(df_trust_summary_stats, aes(x = cond, y = mean, fill = cond)) +
+  geom_col_pattern(
+    alpha=0.9,
+    pattern = 'stripe',
+    pattern_density = df_trust_summary_stats$xAI/10,
+    pattern_spacing = 0.04,
+    pattern_fill    = 'white',
+    pattern_colour  = NA,
+    position=position_dodge()
+  )+
+  geom_errorbar(aes(ymin=mean-sem, ymax=mean+sem),size=1,width=.2,
+                 position=position_dodge(.9))+
+  labs(
+    x = "Condition",
+    y = "Mean Trust Score"
+  ) +
+  scale_y_continuous(limit=c(0,33))+
+  theme_minimal(base_size = 14)+
+  theme(panel.grid.major.x = element_blank(),legend.position="none",axis.text.x = element_text(color = "black", size = 14),axis.text.y = element_text(color = "black", size = 14))+
+  colScale_muted_fill+
+  colScale_muted_colour
+
+# show plot:
+H4_userTrust_by_Cond_stats
+
+# save plot
+ggsave("Figures/H4_userTrust_by_Cond_stats.pdf",width = 7, height = 4)
+ggsave("Figures/H4_userTrust_by_Cond_stats.eps",width = 7, height = 4,device=cairo_ps)
+```
+
+Now on to the stats.
+
+```{r echo=FALSE, fig.height = 4, fig.width = 7, fig.align = "center"}
+
+trust_effect = lm(summed_trust ~ biased_gender*xAI, data = df_trust)
+
+trust_effect_anova=anova(trust_effect)
+names(trust_effect_anova)=c("DF","SumSq","MeanSq","Fvalue","Pvalue") # rename fields for easy access
+
+print("ANOVA table:")
+print(trust_effect_anova)
+
+trust_effect_effsize=effectsize::eta_squared(trust_effect,partial = TRUE) # effect size eta squared
+
+```
+
+Neither main effect, nor the interaction seems to be statistically reliable. Thus, we have limited evidence for H4 here.
+
+# Final post-hoc analysis of candidate matchings: How balanced were candidate pairs on average?
+
+```{r echo=FALSE, fig.height = 4, fig.width = 7, fig.align = "center"}
+df_resp$p1_sum=df_resp$p1_experience+df_resp$p1_education+df_resp$p1_references+df_resp$p1_soft_skills
+df_resp$p2_sum=df_resp$p2_experience+df_resp$p2_education+df_resp$p2_references+df_resp$p2_soft_skills
+df_resp$cand_diff_scores=df_resp$p1_sum-df_resp$p2_sum
+
+mean_cand_diff_scores=mean(df_resp$cand_diff_scores)
+std_cand_diff_scores=sd(df_resp$cand_diff_scores)
+```
+
+This shows: the difference in total feature scores between the paired candidates was to be kept small (mean difference = `r mean_cand_diff_scores`, SD = `r std_cand_diff_scores` in final study).
