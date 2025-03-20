@@ -9,6 +9,11 @@ Although the integration of artificial intelligence (AI) into everyday tasks imp
 
 ### Directory UserData
 
+####  BiasBackfiresXAI25_analysis.Rmd / BiasBackfiresXAI25_analysis.pdf
+Description:
+
+This R Markdown script contains all the data cleaning, processing, and statistical analysis procedures applied to the user data. It replicates the analyses presented in the paper, generating figures, tables, and summary statistics for transparency and reproducibility. Note: running it will create a new subdirectory "Figures".
+
 #### user_survey_questions_view.csv
 Description:
 
