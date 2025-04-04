@@ -1,7 +1,7 @@
 # BiasBackfiresXAI2025
 
 This repository contains the user data and analysis code accompanying the paper: 
-> When Bias Backfires: The Modulatory Role of Counterfactual Explanations on the Adoption of Algorithmic Bias in XAI-Supported Human Decision-Making. Submitted to XAI 2025.
+> When Bias Backfires: The Modulatory Role of Counterfactual Explanations on the Adoption of Algorithmic Bias in XAI-Supported Human Decision-Making. Accepted at The 3rd World Conference on eXplainable Artificial Intelligence (XAI 2025).
 
 <figure>
   <img src="https://github.com/ukuhl/BiasBackfiresXAI2025/blob/b323beae41a2c07dc5ebe8a1588006c15c84fe0b/UserData/Figures/Figure4_mean_bias_shift_interaction.png" alt="alt text" width="600">
@@ -153,13 +153,14 @@ This work is licensed under the Creative Commons Attribution 4.0 International L
 
 ## How to cite
 
-When Bias Backfires: The Modulatory Role of Counterfactual Explanations on the Adoption of Algorithmic Bias in XAI-Supported Human Decision-Making. Submitted to XAI 2025.
+When Bias Backfires: The Modulatory Role of Counterfactual Explanations on the Adoption of Algorithmic Bias in XAI-Supported Human Decision-Making. Accepted at The 3rd World Conference on eXplainable Artificial Intelligence (XAI 2025).
 
 ```
 @inproceedings{
   title={When Bias Backfires: The Modulatory Role of Counterfactual Explanations on the Adoption of Algorithmic Bias in XAI-Supported Human Decision-Making},
   author={Kuhl, Ulrike and Bush, Annika},
   year={2025},
-  pubstate={submitted}
+  pubstate={accepted},
+  booktitle={The 3rd World Conference on eXplainable Artificial Intelligence (XAI 2025)}
 }
 ```
